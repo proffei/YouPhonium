@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>YouPhonium</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>YouPhonium</h1>
+      <p class="subtitle">Upload a PDF, play it in Euphonium sound</p>
+    </header>
+
+    <main class="main-layout">
+      <aside class="sidebar">
+        <section class="upload-section" id="uploadSection">
+          <div class="dropzone" id="dropzone">
+            <input type="file" id="fileInput" accept=".pdf" hidden />
+            <div class="dropzone-content">
+              <span class="dropzone-icon">📄</span>
+              <span class="dropzone-text">Drop PDF or <button type="button" class="btn btn-primary btn-compact" id="browseBtn">Browse</button></span>
+            </div>
+          </div>
+          <p class="upload-hint">Scanned or digital sheet music</p>
+        </section>
+
+        <section class="status-section" id="statusSection" hidden>
+          <div class="status" id="status"></div>
+        </section>
+
+        <section class="playlist-section" id="playlistSection" hidden>
+          <h3>Playlist</h3>
+          <ul class="playlist" id="playlist"></ul>
+        </section>
+      </aside>
+
+      <div class="main-content">
+        <p class="main-placeholder" id="mainPlaceholder">Upload a PDF to get started</p>
+        <section class="player-section" id="playerSection" hidden>
+          <div class="player-card">
+            <div class="track-info">
+              <span id="trackName">—</span>
+            </div>
+            <div class="controls">
+              <button type="button" class="btn btn-icon" id="playBtn" title="Play">
+                <span class="icon">▶</span>
+              </button>
+              <button type="button" class="btn btn-icon" id="pauseBtn" title="Pause" disabled>
+                <span class="icon">⏸</span>
+              </button>
+              <button type="button" class="btn btn-icon" id="stopBtn" title="Stop" disabled>
+                <span class="icon">⏹</span>
+              </button>
+            </div>
+            <div class="tempo-control">
+              <label for="tempoSlider">Tempo</label>
+              <input type="range" id="tempoSlider" min="0.5" max="2" step="0.1" value="1" />
+              <span id="tempoValue">1.0×</span>
+            </div>
+            <div class="progress" id="progressTrack" title="Click or drag to seek">
+              <div class="progress-bar" id="progressBar"></div>
+              <span class="progress-text" id="progressText">0:00 / 0:00</span>
+            </div>
+          </div>
+          <section class="notation-section" id="notationSection">
+            <h3 id="notationTitle">Sheet Music</h3>
+            <div class="notation-wrapper" id="notationWrapper">
+              <div id="verovioNotation" class="verovio-notation" hidden></div>
+              <div class="pdf-container" id="pdfContainer" hidden>
+                <canvas id="pdfCanvas"></canvas>
+              </div>
+            </div>
+            <div id="layoutSection" class="layout-section" hidden>
+              <h4 class="layout-title">Layout</h4>
+              <div class="layout-control">
+                <label for="measuresPerLineSelect">Measures per line</label>
+                <select id="measuresPerLineSelect">
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3" selected>3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
+                <option value="6">6</option>
+                <option value="7">7</option>
+                <option value="8">8</option>
+                <option value="9">9</option>
+                <option value="10">10</option>
+                </select>
+              </div>
+            </div>
+          </section>
+        </section>
+      </div>
+
+      <section class="error-section error-full-width" id="errorSection" hidden>
+        <div class="error-box" id="errorBox"></div>
+      </section>
+    </main>
+
+    <footer>
+      <p>Requires <a href="https://audiveris.com/" target="_blank" rel="noopener">Audiveris</a> for PDF recognition</p>
+    </footer>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tonejs/midi@2.0.28/build/Midi.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/soundfont-player@0.12.0/dist/soundfont-player.min.js"></script>
+  <script src="https://www.verovio.org/javascript/develop/verovio-toolkit-wasm.js" defer></script>
+  <script src="app.js" defer></script>
+</body>
+</html>

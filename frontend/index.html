@@ -17,13 +17,22 @@
       <aside class="sidebar">
         <section class="upload-section" id="uploadSection">
           <div class="dropzone" id="dropzone">
-            <input type="file" id="fileInput" accept=".pdf" hidden />
+            <input type="file" id="fileInput" accept=".pdf,.png,.jpg,.jpeg" hidden />
             <div class="dropzone-content">
               <span class="dropzone-icon">📄</span>
-              <span class="dropzone-text">Drop PDF or <button type="button" class="btn btn-primary btn-compact" id="browseBtn">Browse</button></span>
+              <span class="dropzone-text">Drop PDF/image or <button type="button" class="btn btn-primary btn-compact" id="browseBtn">Browse</button></span>
             </div>
           </div>
-          <p class="upload-hint">Scanned or digital sheet music</p>
+          <div id="engineSelector" class="engine-selector" hidden>
+            <label for="omrEngine">OMR engine:</label>
+            <select id="omrEngine" title="Audiveris: best accuracy, note highlights. HOMR: good rhythm. oemer: deep learning.">
+              <option value="" selected>Auto (Audiveris)</option>
+              <option value="audiveris">Audiveris – best accuracy, note highlights</option>
+              <option value="homr">HOMR – beams, eighth notes</option>
+              <option value="oemer">oemer – deep learning</option>
+            </select>
+          </div>
+          <p class="upload-hint">PDF or image (PNG, JPG)</p>
         </section>
 
         <section class="status-section" id="statusSection" hidden>
@@ -65,12 +74,29 @@
             </div>
           </div>
           <section class="notation-section" id="notationSection">
-            <h3 id="notationTitle">Sheet Music</h3>
-            <div class="notation-wrapper" id="notationWrapper">
-              <div id="verovioNotation" class="verovio-notation" hidden></div>
-              <div class="pdf-container" id="pdfContainer" hidden>
-                <canvas id="pdfCanvas"></canvas>
+            <div class="notation-header">
+              <h3 id="notationTitle">Sheet Music</h3>
+              <div class="view-toggle" id="viewToggle" hidden>
+                <button type="button" class="btn btn-toggle active" id="viewPdfBtn" title="Original PDF">PDF</button>
+                <button type="button" class="btn btn-toggle" id="viewNotationBtn" title="Notation with playback highlight">Notation</button>
               </div>
+            </div>
+            <div class="notation-wrapper" id="notationWrapper">
+              <div class="notation-viewport" id="notationViewport">
+                <div id="measureHighlight" class="measure-highlight" aria-hidden="true"></div>
+                <div id="verovioNotation" class="verovio-notation" hidden></div>
+              </div>
+              <div class="pdf-container" id="pdfContainer" hidden>
+                <div class="pdf-canvas-wrapper">
+                  <canvas id="pdfCanvas"></canvas>
+                  <canvas id="pdfOverlay" class="pdf-overlay" aria-hidden="true"></canvas>
+                </div>
+              </div>
+            </div>
+            <div id="pageNavSection" class="page-nav" hidden>
+              <button type="button" class="btn btn-icon" id="prevPageBtn" title="Previous page">‹</button>
+              <span id="pageNavText">Page 1 of 1</span>
+              <button type="button" class="btn btn-icon" id="nextPageBtn" title="Next page">›</button>
             </div>
             <div id="layoutSection" class="layout-section" hidden>
               <h4 class="layout-title">Layout</h4>
@@ -91,6 +117,18 @@
               </div>
             </div>
           </section>
+          <section class="practice-section" id="practiceSection">
+            <h3>Practice</h3>
+            <p class="practice-hint" id="practiceHint" hidden>Record your playing and compare it to the sheet music.</p>
+            <div class="practice-controls">
+              <button type="button" class="btn btn-primary" id="recordBtn" disabled>Record</button>
+              <button type="button" class="btn btn-icon" id="stopRecordBtn" title="Stop recording" disabled>Stop</button>
+            </div>
+            <div class="practice-results" id="practiceResults" hidden>
+              <p>Accuracy: <span id="accuracyValue">—</span>%</p>
+              <p>Correct: <span id="correctCount">0</span> | Wrong: <span id="wrongCount">0</span> | Missed: <span id="missedCount">0</span></p>
+            </div>
+          </section>
         </section>
       </div>
 
@@ -100,7 +138,7 @@
     </main>
 
     <footer>
-      <p>Requires <a href="https://audiveris.com/" target="_blank" rel="noopener">Audiveris</a> for PDF recognition</p>
+      <p>Uses <a href="https://github.com/liebharc/homr" target="_blank" rel="noopener">HOMR</a>, <a href="https://github.com/BreezeWhite/oemer" target="_blank" rel="noopener">oemer</a>, or <a href="https://audiveris.com/" target="_blank" rel="noopener">Audiveris</a> for PDF recognition</p>
     </footer>
   </div>
 

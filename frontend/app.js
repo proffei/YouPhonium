@@ -297,66 +297,112 @@
       if (nt.time >= measureEnd) break;
       if (nt.time + nt.duration > measureStart) measureNotes.push(nt);
     }
-    var currentNoteIdx = -1;
+    // OMR note positions are indexed by musical events (chords/rests), while MIDI
+    // notes are per pitch. Group simultaneous notes so chord playback maps to one
+    // OMR entry instead of skipping into fallback green circles.
+    var measureEvents = [];
+    var eventEps = 1e-4;
     for (var n = 0; n < measureNotes.length; n++) {
       var nt = measureNotes[n];
-      if (playhead >= nt.time && playhead < nt.time + nt.duration) {
-        currentNoteIdx = n;
+      if (measureEvents.length === 0) {
+        measureEvents.push({ time: nt.time, duration: nt.duration, notes: [nt] });
+      } else {
+        var lastEvt = measureEvents[measureEvents.length - 1];
+        if (Math.abs(nt.time - lastEvt.time) <= eventEps && Math.abs(nt.duration - lastEvt.duration) <= eventEps) {
+          lastEvt.notes.push(nt);
+        } else {
+          measureEvents.push({ time: nt.time, duration: nt.duration, notes: [nt] });
+        }
+      }
+    }
+    var currentEventIdx = -1;
+    for (var n = 0; n < measureEvents.length; n++) {
+      var ev = measureEvents[n];
+      if (playhead >= ev.time && playhead < ev.time + ev.duration) {
+        currentEventIdx = n;
         break;
       }
     }
-    if (currentNoteIdx >= 0) {
-      var useNoteRects = layout && layout.page === pageId && currentMeasureIdx < notePositions.length &&
-        currentNoteIdx < notePositions[currentMeasureIdx].length;
+    if (currentEventIdx >= 0) {
+      var measureRects = (currentMeasureIdx < notePositions.length) ? notePositions[currentMeasureIdx] : [];
+      var useNoteRects = layout && layout.page === pageId && measureRects.length > 0;
       if (useNoteRects) {
-        var nr = notePositions[currentMeasureIdx][currentNoteIdx];
+        // Map each playback event to one or more OMR rect entries.
+        // This handles both:
+        // - a single chord entry with multiple heads[] and
+        // - multiple simultaneous single-head chord entries.
+        var eventRectRanges = [];
+        var rectCursor = 0;
+        for (var ei = 0; ei < measureEvents.length; ei++) {
+          var needed = measureEvents[ei].notes.length;
+          var startRect = rectCursor;
+          var covered = 0;
+          while (rectCursor < measureRects.length && covered < needed) {
+            var rr = measureRects[rectCursor];
+            var units = 1;
+            if (rr && !rr.rest) {
+              if (rr.heads && rr.heads.length > 0) units = rr.heads.length;
+              else if (rr.head) units = 1;
+            }
+            covered += Math.max(1, units);
+            rectCursor++;
+          }
+          if (startRect === rectCursor && rectCursor < measureRects.length) rectCursor++;
+          eventRectRanges.push([startRect, rectCursor]);
+        }
+        var range = eventRectRanges[currentEventIdx] || [currentEventIdx, currentEventIdx + 1];
+        var rStart = Math.max(0, range[0]);
+        var rEnd = Math.min(measureRects.length, Math.max(range[1], rStart + 1));
         var fillStyle = "rgba(22, 101, 52, 0.5)";
         var strokeStyle = "rgb(22, 101, 52)";
         ctx.fillStyle = fillStyle;
         ctx.strokeStyle = strokeStyle;
         ctx.lineWidth = 1.5;
-        if (nr.rest) {
-          var l = nr.left * w, t = nr.top * h, r = nr.right * w, b = nr.bottom * h;
-          var cx = (l + r) / 2, cy = (t + b) / 2;
-          var dashLen = Math.min(20, (r - l) * 0.6);
-          ctx.beginPath();
-          ctx.moveTo(cx - dashLen / 2, cy);
-          ctx.lineTo(cx + dashLen / 2, cy);
-          ctx.stroke();
-        } else {
-          var headsToDraw = nr.heads || (nr.head ? [nr.head] : []);
-          for (var i = 0; i < headsToDraw.length; i++) {
-            var hdr = headsToDraw[i];
-            var hx = hdr.left * w, hy = hdr.top * h;
-            var hw = (hdr.right - hdr.left) * w, hh = (hdr.bottom - hdr.top) * h;
-            var cx = hx + hw / 2, cy = hy + hh / 2;
-            var rx = hw / 2, ry = hh / 2;
+        for (var ri = rStart; ri < rEnd; ri++) {
+          var nr = measureRects[ri];
+          if (nr.rest) {
+            var l = nr.left * w, t = nr.top * h, r = nr.right * w, b = nr.bottom * h;
+            var cx = (l + r) / 2, cy = (t + b) / 2;
+            var dashLen = Math.min(20, (r - l) * 0.6);
             ctx.beginPath();
-            ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
-            ctx.fill();
+            ctx.moveTo(cx - dashLen / 2, cy);
+            ctx.lineTo(cx + dashLen / 2, cy);
             ctx.stroke();
-          }
-          if (nr.stem) {
-            var s = nr.stem;
-            var sx = s.left * w, sy = s.top * h;
-            var sw = (s.right - s.left) * w, sh = (s.bottom - s.top) * h;
-            ctx.fillRect(sx, sy, sw, sh);
-            ctx.strokeRect(sx, sy, sw, sh);
-          }
-          if (headsToDraw.length === 0 && !nr.stem && nr.left != null) {
-            var nx = nr.left * w, ny = nr.top * h;
-            var nw = (nr.right - nr.left) * w, nh = (nr.bottom - nr.top) * h;
-            var cx = nx + nw / 2, cy = ny + nh / 2;
-            var base = Math.min(nw, nh);
-            var rx = Math.max(4, base * 0.48), ry = Math.max(5, base * 0.58);
-            ctx.beginPath();
-            ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.stroke();
+          } else {
+            var headsToDraw = nr.heads || (nr.head ? [nr.head] : []);
+            for (var i = 0; i < headsToDraw.length; i++) {
+              var hdr = headsToDraw[i];
+              var hx = hdr.left * w, hy = hdr.top * h;
+              var hw = (hdr.right - hdr.left) * w, hh = (hdr.bottom - hdr.top) * h;
+              var cx = hx + hw / 2, cy = hy + hh / 2;
+              var rx = hw / 2, ry = hh / 2;
+              ctx.beginPath();
+              ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+              ctx.fill();
+              ctx.stroke();
+            }
+            if (nr.stem) {
+              var s = nr.stem;
+              var sx = s.left * w, sy = s.top * h;
+              var sw = (s.right - s.left) * w, sh = (s.bottom - s.top) * h;
+              ctx.fillRect(sx, sy, sw, sh);
+              ctx.strokeRect(sx, sy, sw, sh);
+            }
+            if (headsToDraw.length === 0 && !nr.stem && nr.left != null) {
+              var nx = nr.left * w, ny = nr.top * h;
+              var nw = (nr.right - nr.left) * w, nh = (nr.bottom - nr.top) * h;
+              var cx = nx + nw / 2, cy = ny + nh / 2;
+              var base = Math.min(nw, nh);
+              var rx = Math.max(4, base * 0.48), ry = Math.max(5, base * 0.58);
+              ctx.beginPath();
+              ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+              ctx.fill();
+              ctx.stroke();
+            }
           }
         }
-      } else if (measureNotes.length > 0) {
-        var frac = (currentNoteIdx + 0.5) / measureNotes.length;
+      } else if (measureEvents.length > 0) {
+        var frac = (currentEventIdx + 0.5) / measureEvents.length;
         var dotX = blockX + frac * blockW;
         var dotY = blockY + blockH / 2;
         var dotRx = Math.min(10, blockW * 0.08);
@@ -1324,26 +1370,10 @@
   fetch((API_URL || window.location.origin) + "/health")
     .then(function (r) { return r.text().then(function (t) { return JSON.parse(t); }); })
     .then(function (data) {
-      var hasEngine = data.omr_audiveris === true || data.omr_homr === true || data.omr_oemer === true;
-      if (!hasEngine) {
-        showError("No OMR engine found. Install HOMR (pip install homr), oemer (./install_oemer.sh), or Audiveris (https://audiveris.com/).");
+      if (data.omr_audiveris !== true) {
+        showError("Audiveris is not available. Please install Audiveris (https://audiveris.com/).");
       } else if (engineSelector) {
         engineSelector.hidden = false;
-        // Hide engine options that are not installed
-        var opts = omrEngineSelect ? omrEngineSelect.options : [];
-        for (var i = 0; i < opts.length; i++) {
-          var v = opts[i].value;
-          if (v === "") continue;
-          opts[i].hidden = v === "homr" && !data.omr_homr || v === "oemer" && !data.omr_oemer || v === "audiveris" && !data.omr_audiveris;
-        }
-        // Default to Audiveris when available
-        if (omrEngineSelect && data.omr_audiveris === true) {
-          omrEngineSelect.value = "";
-        } else if (omrEngineSelect && data.omr_homr === true) {
-          omrEngineSelect.value = "homr";
-        } else if (omrEngineSelect && data.omr_oemer === true) {
-          omrEngineSelect.value = "oemer";
-        }
       }
     })
     .catch(function () {
@@ -1412,8 +1442,7 @@
     var baseUrl = API_URL || window.location.origin;
     var formData = new FormData();
     formData.append("file", file);
-    var engine = omrEngineSelect ? omrEngineSelect.value : "";
-    if (engine) formData.append("engine", engine);
+    formData.append("engine", "audiveris");
 
     fetch(baseUrl + "/upload", {
       method: "POST",
@@ -1477,7 +1506,7 @@
       })
       .then(function (data) {
         if (notes.length === 0) {
-          throw new Error("No notes found in the sheet music. The PDF may not have been recognized correctly. Try a different OMR engine (Audiveris, HOMR, oemer) or use a clearer, higher-resolution image.");
+          throw new Error("No notes found in the sheet music. The PDF may not have been recognized correctly. Try a clearer, higher-resolution image.");
         }
         addToPlaylist(data, file);
         if (playlist.length === 1) {

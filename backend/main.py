@@ -215,7 +215,7 @@ async def upload_pdf(
 ):
     """
     Start PDF or image upload and OMR. Returns job_id; poll GET /upload/status/{job_id} for progress.
-    engine: "homr", "oemer", or "audiveris" to force one; omit for auto (HOMR preferred for PDF).
+    engine: "homr", "oemer", or "audiveris" to force one; omit for auto (Audiveris preferred for PDF).
     Images (PNG, JPG) only support HOMR and oemer; Audiveris requires PDF.
     """
     if not file.filename:

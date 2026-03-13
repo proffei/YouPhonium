@@ -22,7 +22,7 @@ Upload a PDF sheet music file and play it in Euphonium sound (approximated by tr
 | Speed | Faster | 2–5 min/page | ~1 min/page |
 | Input | PDF, image | PDF, image | PDF only |
 
-**Summary:** **HOMR** is the default (best for rhythm: beams, eighth notes). **Audiveris** is best for accidentals and dynamics. **oemer** can have many wrong notes. Use **HOMR** for playback-focused recognition; switch to **Audiveris** when accidentals matter.
+**Summary:** For PDF auto mode, **Audiveris** is the default engine. **HOMR** is still useful when you want to prioritize rhythm-heavy passages (beams, eighth notes), while **Audiveris** is generally better for accidentals and dynamics. **oemer** remains a fallback option.
 
 **Playback priorities:** For playback, pitches and rhythm matter most; dynamics and grace notes are optional. See [PLAN.md](PLAN.md) for the full analysis (based on commercial apps like Sheet Music Scanner).
 

@@ -1,8 +1,8 @@
 """Optical Music Recognition via Audiveris CLI or HOMR (fallback).
 
 Playback priorities (see PLAN.md): Pitches and rhythm matter most for playback;
-dynamics and ornaments are optional. Auto-selection prefers HOMR (rhythm) then
-Audiveris (accidentals); oemer is fallback.
+dynamics and ornaments are optional. Auto-selection prefers Audiveris for PDF,
+then HOMR, then oemer as fallback.
 """
 
 import logging
@@ -496,6 +496,18 @@ def run_omr(
     export_cmd = [
         audiveris,
         "-batch",
+        "-constant",
+        "org.audiveris.omr.image.AdaptiveDescriptor.meanCoeff=0.6",
+        "-constant",
+        "org.audiveris.omr.image.AdaptiveDescriptor.stdDevCoeff=0.625",
+        "-constant",
+        "org.audiveris.omr.sheet.beam.BeamsBuilder.maxHeightRatioHigh=1.6",
+        "-constant",
+        "org.audiveris.omr.sheet.ProcessingSwitches.smallHeads=false",
+        "-constant",
+        "org.audiveris.omr.sheet.beam.BlackHeadSizer.minHeight=1.2",
+        "-constant",
+        "org.audiveris.omr.sheet.curve.SlursBuilder.minSlurHeightLow=0.15",
         "-export",
         "-output",
         str(output_dir),
@@ -619,7 +631,7 @@ def pdf_to_musicxml(
         pdf_path: Path to the PDF file
         original_filename: Optional original filename (e.g. from upload) for output naming
         on_progress: Optional callback for progress messages
-        engine: "homr", "oemer", or "audiveris" to force one; None = auto (HOMR > Audiveris > oemer for PDF)
+        engine: "homr", "oemer", or "audiveris" to force one; None = auto (Audiveris > HOMR > oemer for PDF)
 
     Returns:
         (path, omr_layout, omr_note_positions)

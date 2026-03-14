@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>YouPhonium</title>
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=2" />
 </head>
 <body>
   <div class="app">
@@ -32,6 +32,19 @@
           <div class="status" id="status"></div>
         </section>
 
+        <section class="practice-section" id="practiceSection">
+          <h3>Practice</h3>
+          <p class="practice-hint" id="practiceHint" hidden>Record your playing and compare it to the sheet music.</p>
+          <div class="practice-controls">
+            <button type="button" class="btn btn-primary" id="recordBtn" disabled>Record</button>
+            <button type="button" class="btn btn-icon" id="stopRecordBtn" title="Stop recording" disabled>Stop</button>
+          </div>
+          <div class="practice-results" id="practiceResults" hidden>
+            <p>Accuracy: <span id="accuracyValue">—</span>%</p>
+            <p>Correct: <span id="correctCount">0</span> | Wrong: <span id="wrongCount">0</span> | Missed: <span id="missedCount">0</span></p>
+          </div>
+        </section>
+
         <section class="playlist-section" id="playlistSection" hidden>
           <h3>Playlist</h3>
           <ul class="playlist" id="playlist"></ul>
@@ -55,11 +68,11 @@
               <button type="button" class="btn btn-icon" id="stopBtn" title="Stop" disabled>
                 <span class="icon">⏹</span>
               </button>
-            </div>
-            <div class="tempo-control">
-              <label for="tempoSlider">Tempo</label>
-              <input type="range" id="tempoSlider" min="0.5" max="2" step="0.1" value="1" />
-              <span id="tempoValue">1.0×</span>
+              <div class="tempo-control">
+                <label for="tempoSlider">Tempo</label>
+                <input type="range" id="tempoSlider" min="0.5" max="2" step="0.1" value="1" />
+                <span id="tempoValue">1.0×</span>
+              </div>
             </div>
             <div class="progress" id="progressTrack" title="Click or drag to seek">
               <div class="progress-bar" id="progressBar"></div>
@@ -82,17 +95,10 @@
                 </div>
               </div>
             </div>
-          </section>
-          <section class="practice-section" id="practiceSection">
-            <h3>Practice</h3>
-            <p class="practice-hint" id="practiceHint" hidden>Record your playing and compare it to the sheet music.</p>
-            <div class="practice-controls">
-              <button type="button" class="btn btn-primary" id="recordBtn" disabled>Record</button>
-              <button type="button" class="btn btn-icon" id="stopRecordBtn" title="Stop recording" disabled>Stop</button>
-            </div>
-            <div class="practice-results" id="practiceResults" hidden>
-              <p>Accuracy: <span id="accuracyValue">—</span>%</p>
-              <p>Correct: <span id="correctCount">0</span> | Wrong: <span id="wrongCount">0</span> | Missed: <span id="missedCount">0</span></p>
+            <div class="page-nav-section" id="pageNavSection" hidden>
+              <button type="button" class="btn btn-icon btn-page-nav" id="prevPageBtn" title="Previous page" disabled>&#8249;</button>
+              <span class="page-nav-text" id="pageNavText">Page 1 of 1</span>
+              <button type="button" class="btn btn-icon btn-page-nav" id="nextPageBtn" title="Next page">&#8250;</button>
             </div>
           </section>
         </section>

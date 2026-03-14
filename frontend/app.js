@@ -127,6 +127,11 @@
   /* Verovio tends to fit ~half the expected measures; scale up to match original layout */
   var LAYOUT_PAGE_WIDTH_FACTOR = 2;
   var currentTrackForLayout = null;
+  var currentPdfMeasureRect = null;
+  var overlaySeekDragging = false;
+  var restRunAnchorMeasureIdx = null;
+  var restRunSpanLength = 0;   /* measures in current rest span (capped by layout offset) */
+  var cumulativeRestOffset = 0; /* sum of (span-1) for all completed rest spans */
 
   function applyVerovioLayout() {
     if (!verovioTk) return;
@@ -163,6 +168,11 @@
   function renderPdfPage(pageNum, onRendered) {
     if (!pdfDoc || !pdfCanvas) return;
     pdfDoc.getPage(pageNum).then(function (page) {
+      // Fit the full page to the available wrapper width (wrapper padding = 40px total).
+      var naturalVp = page.getViewport({ scale: 1 });
+      var availableW = (notationWrapper ? notationWrapper.clientWidth : 0) - 40;
+      if (availableW < 100) availableW = 760; // fallback before layout is complete
+      PDF_DISPLAY_SCALE = Math.max(0.3, availableW / naturalVp.width);
       var viewport = page.getViewport({ scale: PDF_DISPLAY_SCALE });
       var ctx = pdfCanvas.getContext("2d");
       pdfCanvas.height = viewport.height;
@@ -196,6 +206,7 @@
     pdfOverlay.style.height = h + "px";
     var ctx = pdfOverlay.getContext("2d");
     ctx.clearRect(0, 0, w, h);
+    currentPdfMeasureRect = null;
     if (totalDuration <= 0) return;
     var track = currentTrackForLayout;
     var boundaries = track && track.measureBoundaries ? track.measureBoundaries : [];
@@ -210,9 +221,106 @@
       }
     }
     if (currentMeasureIdx < 0) return;
+    var measureHasOnsetAt = function (mi) {
+      if (!boundaries || mi < 0 || mi >= boundaries.length) return false;
+      var bs = boundaries[mi][0], be = boundaries[mi][1];
+      for (var k = 0; k < notes.length; k++) {
+        var ntt = notes[k];
+        if (ntt.time >= be) break;
+        if (ntt.time >= bs && ntt.time < be) return true;
+      }
+      return false;
+    };
+    var firstRestAt = function (mi) {
+      if (!notePositions || mi < 0 || mi >= notePositions.length) return null;
+      var list = notePositions[mi] || [];
+      for (var k = 0; k < list.length; k++) {
+        if (list[k] && list[k].rest) return list[k];
+      }
+      return null;
+    };
+    var measureFromOnset = function (onsetSec) {
+      if (!boundaries || onsetSec == null) return -1;
+      for (var bi = 0; bi < boundaries.length; bi++) {
+        if (onsetSec >= boundaries[bi][0] && onsetSec < boundaries[bi][1]) return bi;
+      }
+      return -1;
+    };
+    var soundingNoteMeasureIdx = -1;
+    for (var ni = 0; ni < notes.length; ni++) {
+      var sn = notes[ni];
+      if (sn.time > playhead) break;
+      if (playhead >= sn.time && playhead < sn.time + sn.duration) {
+        soundingNoteMeasureIdx = measureFromOnset(sn.time);
+      }
+    }
+    // Remap MIDI measure index → visual (OMR) measure index, accounting for multi-measure rests.
+    // Audiveris collapses each N-measure rest into ONE visual measure; music21 expands it into N.
+    // layoutOffset = total phantom measures accumulated across ALL rests so far.
+    // cumulativeRestOffset tracks how much offset has been consumed by completed rests.
+    // restRunSpanLength is capped by the remaining layout offset to avoid counting regular rests
+    // (e.g. a half-note rest in the measure immediately after a multi-measure rest) as part of
+    // the multi-measure rest span.
+    var totalLayoutOffset = Math.max(0, boundaries.length - layoutPositions.length);
+
+    var drawMeasureIdx = currentMeasureIdx;
+    if (soundingNoteMeasureIdx >= 0) {
+      // Notes are sounding.  Finalize any pending rest span and apply cumulative offset.
+      if (restRunAnchorMeasureIdx != null &&
+          soundingNoteMeasureIdx >= restRunAnchorMeasureIdx + restRunSpanLength) {
+        cumulativeRestOffset += restRunSpanLength - 1;
+        restRunAnchorMeasureIdx = null;
+        restRunSpanLength = 0;
+      } else if (restRunAnchorMeasureIdx != null) {
+        cumulativeRestOffset += restRunSpanLength - 1;
+        restRunAnchorMeasureIdx = null;
+        restRunSpanLength = 0;
+      }
+      drawMeasureIdx = Math.max(0, soundingNoteMeasureIdx - cumulativeRestOffset);
+    } else if (measureHasOnsetAt(currentMeasureIdx)) {
+      // No note sounding but the current measure has onsets – exit any pending rest span.
+      if (restRunAnchorMeasureIdx != null) {
+        cumulativeRestOffset += restRunSpanLength - 1;
+        restRunAnchorMeasureIdx = null;
+        restRunSpanLength = 0;
+      }
+      drawMeasureIdx = Math.max(0, currentMeasureIdx - cumulativeRestOffset);
+    } else {
+      // In a no-onset region.  Detect when the PREVIOUS rest span is now behind us and start fresh.
+      var pastCurrentSpan = restRunAnchorMeasureIdx != null &&
+        currentMeasureIdx >= restRunAnchorMeasureIdx + restRunSpanLength;
+      if (pastCurrentSpan) {
+        cumulativeRestOffset += restRunSpanLength - 1;
+        restRunAnchorMeasureIdx = null;
+        restRunSpanLength = 0;
+      }
+      if (restRunAnchorMeasureIdx == null) {
+        var anchorIdx = currentMeasureIdx;
+        while (anchorIdx > 0 && !measureHasOnsetAt(anchorIdx - 1)) {
+          anchorIdx--;
+        }
+        restRunAnchorMeasureIdx = anchorIdx;
+        // Count consecutive no-onset measures for this span.
+        var noOnsetCount = 0;
+        for (var si = anchorIdx; si < boundaries.length; si++) {
+          if (measureHasOnsetAt(si)) break;
+          noOnsetCount++;
+        }
+        // Cap using remaining layout offset so regular rests after the multi-measure symbol
+        // are NOT counted as part of the span.
+        if (totalLayoutOffset > 0) {
+          var remainingOffset = Math.max(0, totalLayoutOffset - cumulativeRestOffset);
+          restRunSpanLength = Math.min(noOnsetCount, remainingOffset + 1);
+        } else {
+          restRunSpanLength = noOnsetCount;
+        }
+        if (restRunSpanLength < 1) restRunSpanLength = 1;
+      }
+      drawMeasureIdx = Math.max(0, restRunAnchorMeasureIdx - cumulativeRestOffset);
+    }
 
     var blockX, blockY, blockW, blockH;
-    var layout = currentMeasureIdx < layoutPositions.length ? layoutPositions[currentMeasureIdx] : null;
+    var layout = drawMeasureIdx < layoutPositions.length ? layoutPositions[drawMeasureIdx] : null;
     var pageId = currentNotationPage - 1;
 
     if (layout && layout.page === pageId) {
@@ -224,8 +332,8 @@
       var systemTimes = track && track.systemTimeRanges ? track.systemTimeRanges : [];
       var systemRegions = track && track.systemRegions ? track.systemRegions : [];
       var pageCount = pdfDoc ? pdfDoc.numPages || 1 : 1;
-      var measureStart = boundaries[currentMeasureIdx][0];
-      var measureEnd = boundaries[currentMeasureIdx][1];
+      var measureStart = boundaries[drawMeasureIdx][0];
+      var measureEnd = boundaries[drawMeasureIdx][1];
       var useSystemLayout = systemTimes.length > 0 && systemRegions.length > 0;
 
       if (useSystemLayout) {
@@ -255,7 +363,7 @@
       if (sysIdx < systemRegions.length) {
         var r = systemRegions[sysIdx];
         measuresInSystem = Math.max(1, r[1] - r[0] + 1);
-        measureIdxInSystem = (currentMeasureIdx + 1) - r[0];
+        measureIdxInSystem = (drawMeasureIdx + 1) - r[0];
         measureIdxInSystem = Math.max(0, Math.min(measuresInSystem - 1, measureIdxInSystem));
       }
 
@@ -286,15 +394,18 @@
 
     ctx.fillStyle = "rgba(220, 38, 38, 0.2)";
     ctx.fillRect(blockX, blockY, blockW, blockH);
-    ctx.strokeStyle = "rgb(220, 38, 38)";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(blockX, blockY, blockW, blockH);
-    var measureStart = boundaries[currentMeasureIdx][0];
-    var measureEnd = boundaries[currentMeasureIdx][1];
+    currentPdfMeasureRect = { x: blockX, y: blockY, w: blockW, h: blockH };
+    // timeMeasureIdx: always the actual MIDI measure for time-based note lookup.
+    // drawMeasureIdx may be remapped to a visual measure; timeMeasureIdx must not be.
+    var timeMeasureIdx = soundingNoteMeasureIdx >= 0 ? soundingNoteMeasureIdx : currentMeasureIdx;
+    var measureStart = boundaries[timeMeasureIdx][0];
+    var measureEnd = boundaries[timeMeasureIdx][1];
     var measureNotes = [];
     for (var n = 0; n < notes.length; n++) {
       var nt = notes[n];
       if (nt.time >= measureEnd) break;
+      // For note annotation sync, keep overlap-based inclusion so currently
+      // sounding notes (including ties/sustains) remain highlighted correctly.
       if (nt.time + nt.duration > measureStart) measureNotes.push(nt);
     }
     // OMR note positions are indexed by musical events (chords/rests), while MIDI
@@ -323,8 +434,34 @@
         break;
       }
     }
+    var activeRestEntry = null;
+    if (currentEventIdx < 0) {
+      // If we are inside a silent run (multi-measure rest can be represented only once),
+      // anchor to the rest entry in the anchored run.
+      if (measureNotes.length === 0) {
+        var anchorRest = firstRestAt(drawMeasureIdx);
+        if (!anchorRest) {
+          // Sometimes the only explicit rest symbol can be in a later measure of
+          // the same no-onset run; scan forward up to current position first.
+          for (var fwd = drawMeasureIdx + 1; fwd <= currentMeasureIdx; fwd++) {
+            if (measureHasOnsetAt(fwd)) break;
+            anchorRest = firstRestAt(fwd);
+            if (anchorRest) break;
+          }
+        }
+        if (!anchorRest) {
+          for (var back = drawMeasureIdx - 1; back >= 0; back--) {
+            if (measureHasOnsetAt(back)) break;
+            anchorRest = firstRestAt(back);
+            if (anchorRest) break;
+          }
+        }
+        activeRestEntry = anchorRest;
+      }
+    }
+
     if (currentEventIdx >= 0) {
-      var measureRects = (currentMeasureIdx < notePositions.length) ? notePositions[currentMeasureIdx] : [];
+      var measureRects = (drawMeasureIdx < notePositions.length) ? notePositions[drawMeasureIdx] : [];
       var useNoteRects = layout && layout.page === pageId && measureRects.length > 0;
       if (useNoteRects) {
         // Map each playback event to one or more OMR rect entries.
@@ -357,7 +494,7 @@
         var strokeStyle = "rgb(22, 101, 52)";
         ctx.fillStyle = fillStyle;
         ctx.strokeStyle = strokeStyle;
-        ctx.lineWidth = 1.5;
+        ctx.lineWidth = 0.75;
         for (var ri = rStart; ri < rEnd; ri++) {
           var nr = measureRects[ri];
           if (nr.rest) {
@@ -412,16 +549,29 @@
         ctx.ellipse(dotX, dotY, dotRx, dotRy, 0, 0, Math.PI * 2);
         ctx.fill();
         ctx.strokeStyle = "rgb(22, 101, 52)";
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 1;
         ctx.stroke();
       }
+    } else if (activeRestEntry) {
+      ctx.fillStyle = "rgba(22, 101, 52, 0.5)";
+      ctx.strokeStyle = "rgb(22, 101, 52)";
+      ctx.lineWidth = 0.75;
+      var l2 = activeRestEntry.left * w, t2 = activeRestEntry.top * h;
+      var r2 = activeRestEntry.right * w, b2 = activeRestEntry.bottom * h;
+      var cx2 = (l2 + r2) / 2, cy2 = (t2 + b2) / 2;
+      var dashLen2 = Math.min(20, (r2 - l2) * 0.6);
+      ctx.beginPath();
+      ctx.moveTo(cx2 - dashLen2 / 2, cy2);
+      ctx.lineTo(cx2 + dashLen2 / 2, cy2);
+      ctx.stroke();
     }
   }
 
   function updatePageNav() {
     if (!pageNavSection) return;
     var total = 1;
-    if (verovioTk && hasVerovioScore) total = verovioTk.getPageCount ? verovioTk.getPageCount() : 1;
+    if (viewMode === "pdf" && pdfDoc) total = pdfDoc.numPages || 1;
+    else if (verovioTk && hasVerovioScore) total = verovioTk.getPageCount ? verovioTk.getPageCount() : 1;
     else if (pdfDoc) total = pdfDoc.numPages || 1;
     if (total <= 1) {
       pageNavSection.hidden = true;
@@ -433,12 +583,154 @@
     if (nextPageBtn) nextPageBtn.disabled = currentNotationPage >= total;
   }
 
+  /*
+   * Convert a VISUAL measure index (as used by layoutPositions) to the
+   * corresponding MIDI measure index (as used by measureBoundaries).
+   * These differ when multi-measure rests are collapsed by Audiveris into one
+   * visual measure but expanded to N separate entries by music21.
+   */
+  function getMidiIndexForVisual(visualIdx) {
+    var track = currentTrackForLayout;
+    if (!track) return visualIdx;
+    var boundaries = track.measureBoundaries || [];
+    var layoutPositions = track.measureLayoutPositions || [];
+    var totalLayoutOffset = Math.max(0, boundaries.length - layoutPositions.length);
+    if (totalLayoutOffset === 0) return visualIdx;
+    var cumOffset = 0;
+    var i = 0;
+    while (i < boundaries.length) {
+      var curVisual = i - cumOffset;
+      if (curVisual === visualIdx) return i;
+      if (curVisual > visualIdx) break;
+      if (cumOffset < totalLayoutOffset && !_midiMeasureHasOnset(boundaries, i)) {
+        var remainingOffset = Math.max(0, totalLayoutOffset - cumOffset);
+        var noOnsetCount = 0;
+        for (var si = i; si < boundaries.length; si++) {
+          if (_midiMeasureHasOnset(boundaries, si)) break;
+          noOnsetCount++;
+        }
+        var span = Math.min(noOnsetCount, remainingOffset + 1);
+        if (span < 1) span = 1;
+        cumOffset += span - 1;
+        i += span;
+      } else {
+        i++;
+      }
+    }
+    return Math.min(i, boundaries.length - 1);
+  }
+
+  /* Check if MIDI measure i has any note onsets (module-level helper). */
+  function _midiMeasureHasOnset(boundaries, i) {
+    if (!boundaries || i < 0 || i >= boundaries.length) return false;
+    var bs = boundaries[i][0], be = boundaries[i][1];
+    for (var k = 0; k < notes.length; k++) {
+      if (notes[k].time >= be) break;
+      if (notes[k].time >= bs && notes[k].time < be) return true;
+    }
+    return false;
+  }
+
+  /*
+   * Compute the cumulativeRestOffset for a given seek time by scanning from the
+   * start.  This is used after seekTo() resets the state so that the rest-span
+   * remapping is immediately correct without waiting for playback to walk through
+   * every rest span again.
+   */
+  function computeRestOffsetForTime(seekTime) {
+    var track = currentTrackForLayout;
+    if (!track) return 0;
+    var boundaries = track.measureBoundaries || [];
+    var layoutPositions = track.measureLayoutPositions || [];
+    var totalLayoutOffset = Math.max(0, boundaries.length - layoutPositions.length);
+    if (totalLayoutOffset === 0 || !boundaries.length) return 0;
+    var cumOffset = 0;
+    var i = 0;
+    while (i < boundaries.length && boundaries[i][0] < seekTime && cumOffset < totalLayoutOffset) {
+      if (!_midiMeasureHasOnset(boundaries, i)) {
+        var remainingOffset = Math.max(0, totalLayoutOffset - cumOffset);
+        var noOnsetCount = 0;
+        for (var si = i; si < boundaries.length; si++) {
+          if (_midiMeasureHasOnset(boundaries, si)) break;
+          noOnsetCount++;
+        }
+        var span = Math.min(noOnsetCount, remainingOffset + 1);
+        if (span < 1) span = 1;
+        var spanEnd = i + span;
+        var spanEndTime = spanEnd < boundaries.length ? boundaries[spanEnd][0] : Infinity;
+        if (spanEndTime <= seekTime) {
+          cumOffset += span - 1;
+          i = spanEnd;
+        } else {
+          break;  /* inside this rest span */
+        }
+      } else {
+        i++;
+      }
+    }
+    return cumOffset;
+  }
+
+  /*
+   * Return the playback time (seconds) corresponding to the first measure on the
+   * given PDF page (1-based).  Accounts for multi-measure rest remapping.
+   */
+  function getTimeForPage(pageNum) {
+    var track = currentTrackForLayout;
+    if (!track) return null;
+    var boundaries = track.measureBoundaries || [];
+    var layoutPositions = track.measureLayoutPositions || [];
+    if (!boundaries.length || !layoutPositions.length) return null;
+    var targetPageIdx = pageNum - 1;
+    /* Find the first visual measure on this page. */
+    var j_first = -1;
+    for (var j = 0; j < layoutPositions.length; j++) {
+      if (layoutPositions[j] && layoutPositions[j].page === targetPageIdx) {
+        j_first = j;
+        break;
+      }
+    }
+    if (j_first <= 0) return 0;  /* page 1 or not found → start */
+    /* Scan MIDI measures tracking cumulative offset to find the one that maps to j_first. */
+    var totalLayoutOffset = Math.max(0, boundaries.length - layoutPositions.length);
+    var cumOffset = 0;
+    var i = 0;
+    while (i < boundaries.length) {
+      var visualIdx = i - cumOffset;
+      if (visualIdx >= j_first) return boundaries[i][0];
+      if (totalLayoutOffset > 0 && cumOffset < totalLayoutOffset &&
+          !_midiMeasureHasOnset(boundaries, i)) {
+        var remainingOffset = Math.max(0, totalLayoutOffset - cumOffset);
+        var noOnsetCount = 0;
+        for (var si = i; si < boundaries.length; si++) {
+          if (_midiMeasureHasOnset(boundaries, si)) break;
+          noOnsetCount++;
+        }
+        var span = Math.min(noOnsetCount, remainingOffset + 1);
+        if (span < 1) span = 1;
+        if (i - cumOffset >= j_first) return boundaries[i][0];
+        cumOffset += span - 1;
+        i += span;
+      } else {
+        i++;
+      }
+    }
+    return boundaries[boundaries.length - 1][0];
+  }
+
   function goToPage(pageNum) {
     var total = 1;
-    if (verovioTk && hasVerovioScore) total = verovioTk.getPageCount ? verovioTk.getPageCount() : 1;
+    if (viewMode === "pdf" && pdfDoc) total = pdfDoc.numPages || 1;
+    else if (verovioTk && hasVerovioScore) total = verovioTk.getPageCount ? verovioTk.getPageCount() : 1;
     else if (pdfDoc) total = pdfDoc.numPages || 1;
     var p = Math.max(1, Math.min(total, pageNum));
     currentNotationPage = p;
+    /* Seek playhead to the first measure on the target page so the red rectangle,
+       note highlight, and progress bar all update to match. */
+    if (notes.length > 0 && totalDuration > 0) {
+      var pageTime = getTimeForPage(p);
+      if (pageTime != null) seekTo(pageTime);
+    }
     if (viewMode === "pdf" && pdfDoc) {
       renderPdfPage(p);
     } else if (verovioTk && verovioNotation && hasVerovioScore) {
@@ -466,8 +758,53 @@
     if (viewMode === "pdf") {
       var pageCount = pdfDoc ? pdfDoc.numPages || 1 : 1;
       if (pageCount > 1 && totalDuration > 0) {
-        var ratio = playhead / totalDuration;
-        var targetPage = Math.min(pageCount, Math.max(1, Math.ceil(ratio * pageCount)));
+        var targetPage = currentNotationPage;
+        var track = currentTrackForLayout;
+        var boundaries = track && track.measureBoundaries ? track.measureBoundaries : [];
+        var layoutPositions = track && track.measureLayoutPositions ? track.measureLayoutPositions : [];
+        // Find which PDF page the current measure is on using OMR layout positions.
+        // IMPORTANT: layoutPositions is indexed by VISUAL (OMR/sheet) measures, while
+        // measureBoundaries is indexed by music21 MIDI measures. These differ when a
+        // multi-measure rest is one visual measure in Audiveris but 6 separate entries
+        // in music21. Apply the same rest-span remapping used by drawPdfOverlay so
+        // we look up the correct visual measure index in layoutPositions.
+        var foundPage = false;
+        if (layoutPositions.length > 0 && boundaries.length > 0) {
+          var rawMeasureIdx = -1;
+          for (var i = 0; i < boundaries.length; i++) {
+            if (playhead >= boundaries[i][0] && playhead < boundaries[i][1]) {
+              rawMeasureIdx = i;
+              break;
+            }
+          }
+          if (rawMeasureIdx < 0 && playhead >= boundaries[boundaries.length - 1][1]) {
+            rawMeasureIdx = boundaries.length - 1;
+          }
+          if (rawMeasureIdx >= 0) {
+            // Remap to visual measure index using cumulativeRestOffset (same logic as drawPdfOverlay).
+            var visualMeasureIdx;
+            if (restRunAnchorMeasureIdx != null &&
+                rawMeasureIdx >= restRunAnchorMeasureIdx &&
+                rawMeasureIdx < restRunAnchorMeasureIdx + restRunSpanLength) {
+              // Inside a rest span: show the anchor's visual position.
+              visualMeasureIdx = Math.max(0, restRunAnchorMeasureIdx - cumulativeRestOffset);
+            } else {
+              // After a rest (or no rest): subtract cumulative offset.
+              visualMeasureIdx = Math.max(0, rawMeasureIdx - cumulativeRestOffset);
+            }
+            visualMeasureIdx = Math.max(0, Math.min(layoutPositions.length - 1, visualMeasureIdx));
+            if (layoutPositions[visualMeasureIdx] && layoutPositions[visualMeasureIdx].page != null) {
+              targetPage = layoutPositions[visualMeasureIdx].page + 1;
+              foundPage = true;
+            }
+          }
+        }
+        if (!foundPage) {
+          // Fallback: proportional split (less accurate but safe).
+          var ratio = playhead / totalDuration;
+          targetPage = Math.min(pageCount, Math.max(1, Math.ceil(ratio * pageCount)));
+        }
+        targetPage = Math.max(1, Math.min(pageCount, targetPage));
         if (targetPage !== currentNotationPage) {
           currentNotationPage = targetPage;
           renderPdfPage(currentNotationPage);
@@ -922,6 +1259,9 @@
     pause();
     playhead = 0;
     lastPlayedIndex = 0;
+    restRunAnchorMeasureIdx = null;
+    restRunSpanLength = 0;
+    cumulativeRestOffset = 0;
     progressBar.style.width = "0%";
     var endTime = scoreDuration > 0 ? scoreDuration : totalDuration;
     progressText.textContent = "0:00 / " + formatTime(endTime);
@@ -939,6 +1279,9 @@
     var t = Math.max(0, Math.min(endTime, seconds));
     playhead = t;
     lastPlayedIndex = 0;
+    restRunAnchorMeasureIdx = null;
+    restRunSpanLength = 0;
+    cumulativeRestOffset = computeRestOffsetForTime(t);
     while (lastPlayedIndex < notes.length && notes[lastPlayedIndex].time < playhead) {
       lastPlayedIndex++;
     }
@@ -949,6 +1292,72 @@
     if (isPlaying) {
       startRealTime = performance.now() - (playhead / tempo) * 1000;
     }
+  }
+
+  function getTimeFromPdfOverlayPoint(clientX, clientY) {
+    if (!pdfOverlay || !currentTrackForLayout || totalDuration <= 0) return null;
+    var rect = pdfOverlay.getBoundingClientRect();
+    if (!rect || rect.width <= 0 || rect.height <= 0) return null;
+    var x = Math.max(0, Math.min(rect.width, clientX - rect.left));
+    var y = Math.max(0, Math.min(rect.height, clientY - rect.top));
+    var w = rect.width;
+    var h = rect.height;
+
+    var boundaries = currentTrackForLayout.measureBoundaries || [];
+    var layoutPositions = currentTrackForLayout.measureLayoutPositions || [];
+    if (!boundaries.length) return null;
+    var pageId = currentNotationPage - 1;
+
+    // Prefer precise measure mapping from OMR/PDF layout boxes on current page.
+    // bestVisualIdx is a VISUAL (layoutPositions) index; convert to MIDI for boundaries.
+    var bestVisualIdx = -1;
+    var bestDist = Number.POSITIVE_INFINITY;
+    for (var j = 0; j < layoutPositions.length; j++) {
+      var lp = layoutPositions[j];
+      if (!lp || lp.page !== pageId) continue;
+      var lx = lp.left * w;
+      var ly = lp.top * h;
+      var lw = (lp.right - lp.left) * w;
+      var lh = (lp.bottom - lp.top) * h;
+      var rx = lx + lw;
+      var by = ly + lh;
+      if (x >= lx && x <= rx && y >= ly && y <= by) {
+        bestVisualIdx = j;
+        bestDist = 0;
+        break;
+      }
+      var dx = x < lx ? (lx - x) : (x > rx ? (x - rx) : 0);
+      var dy = y < ly ? (ly - y) : (y > by ? (y - by) : 0);
+      var d = dx * dx + dy * dy;
+      if (d < bestDist) {
+        bestDist = d;
+        bestVisualIdx = j;
+      }
+    }
+
+    if (bestVisualIdx >= 0) {
+      var midiIdx = getMidiIndexForVisual(bestVisualIdx);
+      var m = boundaries[midiIdx];
+      if (!m) return null;
+      var mStart = m[0], mEnd = m[1];
+      if (!(mEnd > mStart)) return mStart;
+      var lp2 = layoutPositions[bestVisualIdx];
+      var span = Math.max(1e-6, lp2.right - lp2.left);
+      var fx = Math.max(0, Math.min(1, ((x / w) - lp2.left) / span));
+      return mStart + fx * (mEnd - mStart);
+    }
+
+    // Fallback: seek proportionally within current page width.
+    var endTime = scoreDuration > 0 ? scoreDuration : totalDuration;
+    var pageCount = pdfDoc ? (pdfDoc.numPages || 1) : 1;
+    var pageStart = ((currentNotationPage - 1) / pageCount) * endTime;
+    var pageEnd = (currentNotationPage / pageCount) * endTime;
+    return pageStart + (x / w) * Math.max(0, pageEnd - pageStart);
+  }
+
+  function handleOverlaySeek(e) {
+    var t = getTimeFromPdfOverlayPoint(e.clientX, e.clientY);
+    if (t != null) seekTo(t);
   }
 
   function handleProgressSeek(e) {
@@ -973,6 +1382,9 @@
     }
     return pdfLoadPromise.then(function (pdfResult) {
       currentTrackForLayout = track;
+      restRunAnchorMeasureIdx = null;
+      restRunSpanLength = 0;
+      cumulativeRestOffset = 0;
       var pdfDims = pdfResult && pdfResult.dims;
       var pdfWidthPt = pdfDims && pdfDims.width ? pdfDims.width : 0;
       var n = track.measuresPerLine != null ? track.measuresPerLine : track.measuresPerFirstSystem;
@@ -1348,6 +1760,34 @@
     });
   }
 
+  if (pdfOverlay) {
+    pdfOverlay.addEventListener("mousedown", function (e) {
+      if (e.button !== 0 || !currentPdfMeasureRect) return;
+      var r = pdfOverlay.getBoundingClientRect();
+      var x = e.clientX - r.left;
+      var y = e.clientY - r.top;
+      var inside = x >= currentPdfMeasureRect.x &&
+        x <= currentPdfMeasureRect.x + currentPdfMeasureRect.w &&
+        y >= currentPdfMeasureRect.y &&
+        y <= currentPdfMeasureRect.y + currentPdfMeasureRect.h;
+      if (!inside) return;
+      e.preventDefault();
+      overlaySeekDragging = true;
+      handleOverlaySeek(e);
+      function onMove(ev) {
+        if (!overlaySeekDragging) return;
+        handleOverlaySeek(ev);
+      }
+      function onUp() {
+        overlaySeekDragging = false;
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+      }
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    });
+  }
+
   if (measuresPerLineSelect) {
     measuresPerLineSelect.addEventListener("change", function () {
       measuresPerLineMultiplier = parseInt(measuresPerLineSelect.value, 10);
@@ -1399,10 +1839,6 @@
         .then(function (data) {
           var msg = data.message || "Processing…";
           showStatus(msg, "loading");
-          if (mainPlaceholder) {
-            mainPlaceholder.textContent = msg + " (this may take a few minutes)";
-            mainPlaceholder.hidden = false;
-          }
           if (data.status === "complete" && data.result) {
             return data.result;
           }
@@ -1434,10 +1870,7 @@
     hideError();
     showStatus("Uploading file…", "loading");
     playerSection.hidden = true;
-    if (mainPlaceholder) {
-      mainPlaceholder.textContent = "Uploading file…";
-      mainPlaceholder.hidden = false;
-    }
+    if (mainPlaceholder) mainPlaceholder.hidden = false;
 
     var baseUrl = API_URL || window.location.origin;
     var formData = new FormData();

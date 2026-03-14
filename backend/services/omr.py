@@ -508,6 +508,35 @@ def run_omr(
         "org.audiveris.omr.sheet.beam.BlackHeadSizer.minHeight=1.2",
         "-constant",
         "org.audiveris.omr.sheet.curve.SlursBuilder.minSlurHeightLow=0.15",
+        # Render PDF at 400 DPI instead of the default 300 DPI.
+        # A sharper image improves staff-line position detection, especially at the
+        # top of a new page where a fresh staff calibration is performed.  Mis-calibration
+        # by even 1 interline causes all notes on that system to be 2 pitch-positions off
+        # (the exact symptom seen in measure 41).  Higher resolution reduces that error.
+        "-constant",
+        "org.audiveris.omr.image.ImageLoading.pdfResolution=400",
+        # Improve half-note (void head) detection.
+        # Default maxOpenDy=0.1 is very tight: void heads slightly off a staff line
+        # are rejected and fall back to black-head (quarter) classification.
+        # Raising to 0.25 gives more vertical tolerance without adding noise.
+        "-constant",
+        "org.audiveris.omr.sheet.note.NoteHeadsBuilder.maxOpenDy=0.25",
+        # Default minHoleWhiteRatio=0.375: if ink partially fills the void-head oval
+        # (common at system starts on page 2 where symbols crowd together), the head
+        # is classified as black → quarter.  Lowering to 0.22 makes detection more
+        # robust to slight ink bleed in the half-note interior.
+        "-constant",
+        "org.audiveris.omr.sheet.note.NoteHeadsBuilder.minHoleWhiteRatio=0.22",
+        # Accept note-head candidates with a slightly lower confidence score so that
+        # heads in areas with variable contrast (e.g. top of a new page) are kept.
+        "-constant",
+        "org.audiveris.omr.sheet.note.NoteHeadsBuilder.gradeMargin=0.15",
+        # Default yGapMax=0.8 interlines: stems slightly displaced from their head
+        # (e.g. at a system break where line detection restarts) are not linked.
+        # Raising to 1.0 fixes loose head–stem connections without creating wrong links
+        # in well-printed measures where gaps are near zero.
+        "-constant",
+        "org.audiveris.omr.sig.relation.HeadStemRelation.yGapMax=1.0",
         "-export",
         "-output",
         str(output_dir),

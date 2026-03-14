@@ -259,6 +259,7 @@ header h1 {
 
 .controls {
   display: flex;
+  align-items: center;
   gap: 12px;
   margin-bottom: 20px;
 }
@@ -266,18 +267,19 @@ header h1 {
 .tempo-control {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 20px;
+  gap: 8px;
+  margin-left: auto;
 }
 
 .tempo-control label {
-  font-size: 0.85rem;
+  font-size: 1.1rem;
   color: var(--muted);
-  min-width: 48px;
+  white-space: nowrap;
 }
 
 .tempo-control input[type="range"] {
-  flex: 1;
+  width: 180px;
+  flex: none;
   height: 6px;
   -webkit-appearance: none;
   appearance: none;
@@ -418,8 +420,7 @@ header h1 {
   background: var(--surface2);
   border-radius: var(--radius);
   border: 1px solid var(--border);
-  overflow: auto;
-  max-height: 560px;
+  overflow: visible;
   padding: 20px;
 }
 
@@ -457,8 +458,30 @@ header h1 {
   left: 0;
   right: auto;
   bottom: auto;
-  pointer-events: none;
+  pointer-events: auto;
   z-index: 1;
+}
+
+.page-nav-section {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  padding: 12px 0 4px;
+}
+
+.page-nav-text {
+  font-size: 0.95rem;
+  color: var(--muted);
+  min-width: 90px;
+  text-align: center;
+}
+
+.btn-page-nav {
+  font-size: 1.6rem;
+  line-height: 1;
+  padding: 2px 12px;
+  font-weight: 300;
 }
 
 .notation-header {
@@ -508,7 +531,6 @@ header h1 {
   z-index: 0;
   display: none;
   background: rgba(220, 38, 38, 0.2);
-  border: 1px solid rgba(220, 38, 38, 0.5);
   box-sizing: border-box;
 }
 

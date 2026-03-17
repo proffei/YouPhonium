@@ -486,57 +486,29 @@ def run_omr(
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Single command: -export implies -transcribe. useSeparateBookFolders=false
-    # puts files directly in output_dir for simpler path finding.
+    # CLI constants: match GUI settings not saved in run.properties (compiled-in defaults
+    # that the GUI shows but doesn't write to file unless explicitly overridden).
+    # BlackHeadSizer.minHeight=1.2: match GUI default; ensures small noteheads are recognized.
+    _CLI_CONSTANTS = [
+        "org.audiveris.omr.sheet.beam.BlackHeadSizer.minHeight=1.2",
+    ]
+
     _progress("Running Audiveris (transcribe + export)…")
     log.info("[OMR] Audiveris batch export: %s", pdf_path.name)
     env = os.environ.copy()
     env.setdefault("JAVA_TOOL_OPTIONS", "-Djava.awt.headless=true")
 
+    def _constant_flags(constants: list) -> list:
+        flags = []
+        for c in constants:
+            flags.extend(["-constant", c])
+        return flags
+
     export_cmd = [
         audiveris,
         "-batch",
-        "-constant",
-        "org.audiveris.omr.image.AdaptiveDescriptor.meanCoeff=0.6",
-        "-constant",
-        "org.audiveris.omr.image.AdaptiveDescriptor.stdDevCoeff=0.625",
-        "-constant",
-        "org.audiveris.omr.sheet.beam.BeamsBuilder.maxHeightRatioHigh=1.6",
-        "-constant",
-        "org.audiveris.omr.sheet.ProcessingSwitches.smallHeads=false",
-        "-constant",
-        "org.audiveris.omr.sheet.beam.BlackHeadSizer.minHeight=1.2",
-        "-constant",
-        "org.audiveris.omr.sheet.curve.SlursBuilder.minSlurHeightLow=0.15",
-        # Render PDF at 400 DPI instead of the default 300 DPI.
-        # A sharper image improves staff-line position detection, especially at the
-        # top of a new page where a fresh staff calibration is performed.  Mis-calibration
-        # by even 1 interline causes all notes on that system to be 2 pitch-positions off
-        # (the exact symptom seen in measure 41).  Higher resolution reduces that error.
-        "-constant",
-        "org.audiveris.omr.image.ImageLoading.pdfResolution=400",
-        # Improve half-note (void head) detection.
-        # Default maxOpenDy=0.1 is very tight: void heads slightly off a staff line
-        # are rejected and fall back to black-head (quarter) classification.
-        # Raising to 0.25 gives more vertical tolerance without adding noise.
-        "-constant",
-        "org.audiveris.omr.sheet.note.NoteHeadsBuilder.maxOpenDy=0.25",
-        # Default minHoleWhiteRatio=0.375: if ink partially fills the void-head oval
-        # (common at system starts on page 2 where symbols crowd together), the head
-        # is classified as black → quarter.  Lowering to 0.22 makes detection more
-        # robust to slight ink bleed in the half-note interior.
-        "-constant",
-        "org.audiveris.omr.sheet.note.NoteHeadsBuilder.minHoleWhiteRatio=0.22",
-        # Accept note-head candidates with a slightly lower confidence score so that
-        # heads in areas with variable contrast (e.g. top of a new page) are kept.
-        "-constant",
-        "org.audiveris.omr.sheet.note.NoteHeadsBuilder.gradeMargin=0.15",
-        # Default yGapMax=0.8 interlines: stems slightly displaced from their head
-        # (e.g. at a system break where line detection restarts) are not linked.
-        # Raising to 1.0 fixes loose head–stem connections without creating wrong links
-        # in well-printed measures where gaps are near zero.
-        "-constant",
-        "org.audiveris.omr.sig.relation.HeadStemRelation.yGapMax=1.0",
+        "-force",
+        *_constant_flags(_CLI_CONSTANTS),
         "-export",
         "-output",
         str(output_dir),
@@ -600,6 +572,7 @@ def run_omr(
                 [
                     audiveris,
                     "-batch",
+                    *_constant_flags(_CLI_CONSTANTS),
                     "-export",
                     "-output",
                     str(output_dir),
@@ -723,7 +696,8 @@ def pdf_to_musicxml(
 
         suffix = musicxml_path.suffix
         persistent = output_dir / f"{stem}{suffix}"
-        shutil.copy2(musicxml_path, persistent)
+        shutil.copy(musicxml_path, persistent)
+        persistent.touch()  # Update mtime to now so file date reflects this run
         log.info("[OMR] MusicXML saved to: %s", persistent.resolve())
 
         # When Audiveris was used, parse .omr for precise measure layout and note positions (PDF overlay)

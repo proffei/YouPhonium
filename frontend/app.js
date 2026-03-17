@@ -1838,6 +1838,9 @@
         })
         .then(function (data) {
           var msg = data.message || "Processing…";
+          if (data.status === "processing") {
+            msg = msg + " This will take several minutes.";
+          }
           showStatus(msg, "loading");
           if (data.status === "complete" && data.result) {
             return data.result;

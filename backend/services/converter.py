@@ -7,10 +7,13 @@ and grace notes are optional. Post-processing focuses on rhythm fixes
 
 import copy
 import io
+import logging
 import re
 import tempfile
 from pathlib import Path
 from typing import List, Tuple
+
+log = logging.getLogger(__name__)
 
 # Lazy import: music21 takes 10–30s to load; defer until first conversion
 _m21_cache = None
@@ -165,6 +168,67 @@ def _fix_measure_full_of_quarters(m, measure_ql: float, notes_in_measure: list) 
             m.insert(off + 0.5, dup)
 
 
+def _fix_false_augmentation_dots(score):
+    """
+    Remove augmentation dots that cause a measure to overflow its time signature.
+
+    Strategy: for each overflowing measure, find dotted notes whose dot (the extra
+    duration = ql / 3) accounts for the excess. Remove the dot from whichever note
+    brings the measure closest to its capacity without going under.
+
+    Only acts on overflowing measures — real dots in measures that fit are untouched.
+    """
+    _, _, note, chord = _music21()
+    if hasattr(score, "flat"):
+        measures = score.flat.getElementsByClass("Measure")
+    else:
+        measures = []
+        for part in getattr(score, "parts", [score]):
+            measures.extend(part.getElementsByClass("Measure"))
+
+    for m in measures:
+        ts = m.timeSignature
+        if ts is None:
+            continue
+        measure_ql = ts.quarterLength
+        notes_in_measure = [n for n in m.notes if isinstance(n, (note.Note, chord.Chord))]
+        if not notes_in_measure:
+            continue
+        total_ql = sum(n.quarterLength for n in notes_in_measure)
+
+        if total_ql <= measure_ql * 1.001:
+            continue  # Measure fits fine; real dots are safe
+
+        # Find notes that have augmentation dots
+        dotted_notes = [n for n in notes_in_measure if getattr(n.duration, "dots", 0) > 0]
+        if not dotted_notes:
+            continue
+
+        # Try removing one dot at a time; pick the removal that best resolves the overflow
+        best_note = None
+        best_diff = float("inf")
+        for n in dotted_notes:
+            # Removing one dot: undotted duration = ql * 2/3
+            undotted_ql = n.quarterLength * 2.0 / 3.0
+            dot_contribution = n.quarterLength - undotted_ql
+            new_total = total_ql - dot_contribution
+            # Only accept if it brings the measure within bounds
+            if new_total <= measure_ql * 1.001:
+                diff = abs(new_total - measure_ql)
+                if diff < best_diff:
+                    best_diff = diff
+                    best_note = (n, undotted_ql)
+
+        if best_note:
+            n, undotted_ql = best_note
+            old_ql = n.quarterLength
+            n.duration.quarterLength = undotted_ql
+            log.info(
+                "[converter] Removed false augmentation dot in measure %s: %.3f -> %.3f ql",
+                m.measureNumber, old_ql, undotted_ql,
+            )
+
+
 def _fix_eighth_as_quarter(score):
     """
     Fix OMR error where eighth notes are exported as quarter notes (duration doubled).
@@ -262,6 +326,7 @@ def musicxml_to_midi(musicxml_path: Path) -> bytes:
             "Try a different OMR engine (Audiveris, HOMR, oemer) or use a clearer, higher-resolution image."
         )
 
+    _fix_false_augmentation_dots(score)
     _fix_eighth_as_quarter(score)
     _normalize_durations(score)
     _set_euphonium_header(score)
@@ -289,6 +354,7 @@ def musicxml_to_normalized_musicxml(musicxml_path: Path) -> Tuple[bytes, str]:
         score = m21_converter.parse(str(musicxml_path))
     except Exception as e:
         raise ValueError(f"Failed to parse MusicXML: {e}") from e
+    _fix_false_augmentation_dots(score)
     _fix_eighth_as_quarter(score)
     _normalize_durations(score)
     _set_euphonium_header(score)
